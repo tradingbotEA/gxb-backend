@@ -41,11 +41,20 @@ function initializeUser(userId) {
     users[userId] = {
       botRunning: false,
       lastTradeTime: 0,
+
+      // ACCOUNT STATS
       dailyLoss: 0,
       totalTrades: 0,
       wins: 0,
       losses: 0,
       balance: 0,
+
+      // TRADE HISTORY (IMPORTANT FOR SaaS)
+      trades: [],
+
+      // LAST SIGNAL CACHE (useful for UI)
+      lastSignal: null,
+      lastConfidence: 0
     };
 
     console.log(`✅ User initialized: ${userId}`);
@@ -336,7 +345,15 @@ function smcEngine(userId) {
             symbol: "R_100"
         }
     }));
-
+   
+user.trades.push({
+    time: new Date().toISOString(),
+    signal: signal,
+    confidence: confidence,
+    entry: latest,
+    symbol: "R_100",
+    status: "OPEN"
+});
     user.lastTradeTime = now;
     user.totalTrades++;
 
@@ -373,3 +390,40 @@ app.get("/user/:userId", (req, res) => {
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
+app.get("/trades/:userId", (req, res) => {
+
+    const { userId } = req.params;
+
+    initializeUser(userId);
+
+    res.json({
+        trades: users[userId].trades || []
+    });
+});
+async function loadTradeHistory() {
+
+    if (!window.currentUserId) return;
+
+    const res = await fetch(
+        `https://gxb-backend.onrender.com/trades/${window.currentUserId}`
+    );
+
+    const data = await res.json();
+
+    const container = document.getElementById("tradeHistory");
+
+    if (!container) return;
+
+    container.innerHTML = data.trades.map(t => `
+        <div style="padding:10px;border-bottom:1px solid #333">
+            <b>${t.signal}</b> | ${t.symbol}<br>
+            Confidence: ${t.confidence}%<br>
+            Entry: ${t.entry}<br>
+            Time: ${new Date(t.time).toLocaleTimeString()}
+        </div>
+    `).join("");
+}
+setInterval(() => {
+    loadTradeHistory();
+}, 5000);
