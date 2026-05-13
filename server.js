@@ -81,6 +81,19 @@ app.get("/status", (req, res) => {
     });
 });
 
+ws.on("open", () => {
+    console.log("Connected to Deriv API");
+
+    ws.send(JSON.stringify({
+        authorize: process.env.DERIV_TOKEN
+    }));
+
+    // 🔥 LIVE MARKET STREAM
+    ws.send(JSON.stringify({
+        ticks: "R_100",
+        subscribe: 1
+    }));
+});
 let botRunning = true;
 
 app.post("/stop-bot", (req, res) => {
