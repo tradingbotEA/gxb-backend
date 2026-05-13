@@ -247,74 +247,101 @@ app.post("/trade", (req, res) => {
   });
 });
 
-/* =========================================
-   SIMPLE BOT STRATEGY
-========================================= */
+/*==================SMC ENGINE BOT ===============*/
+function smcEngine(userId) {
+    initializeUser(userId);
 
-function simpleBot(userId) {
-  initializeUser(userId);
+    const user = users[userId];
 
-  const user = users[userId];
+    if (!user.botRunning) return;
+    if (marketPrices.length < 30) return;
 
-  // BOT OFF
-  if (!user.botRunning) return;
+    const now = Date.now();
 
-  // NEED ENOUGH MARKET DATA
-  if (marketPrices.length < 2) return;
+    // cooldown
+    if (now - user.lastTradeTime < 8000) return;
 
-  // DAILY LOSS LIMIT
-  if (user.dailyLoss >= MAX_DAILY_LOSS) {
-    console.log(`🛑 Daily loss limit hit for ${userId}`);
+    const prices = marketPrices.slice(-30);
 
-    user.botRunning = false;
+    const latest = prices[prices.length - 1];
+    const prev = prices[prices.length - 2];
 
-    return;
-  }
+    // ================= MARKET STRUCTURE =================
 
-  // COOLDOWN SYSTEM
-  const now = Date.now();
+    let highs = [];
+    let lows = [];
 
-  if (now - user.lastTradeTime < 10000) {
-    console.log(`⏳ Cooldown active for ${userId}`);
+    for (let i = 1; i < prices.length - 1; i++) {
+        if (prices[i] > prices[i - 1] && prices[i] > prices[i + 1]) {
+            highs.push(prices[i]);
+        }
+        if (prices[i] < prices[i - 1] && prices[i] < prices[i + 1]) {
+            lows.push(prices[i]);
+        }
+    }
 
-    return;
-  }
+    const lastHigh = highs[highs.length - 1];
+    const lastLow = lows[lows.length - 1];
 
-  const last = marketPrices[marketPrices.length - 1];
+    // ================= BOS =================
 
-  const prev = marketPrices[marketPrices.length - 2];
+    const bosUp = latest > lastHigh;
+    const bosDown = latest < lastLow;
 
-  let signal;
+    // ================= MOMENTUM =================
 
-  // SIMPLE TREND STRATEGY
-  if (last > prev) {
-    signal = "CALL";
-  } else {
-    signal = "PUT";
-  }
+    const momentum = latest - prev;
 
-  console.log(`📊 SIGNAL for ${userId}: ${signal}`);
+    // ================= LIQUIDITY SWEEP =================
 
-  // EXECUTE TRADE
-  ws.send(
-    JSON.stringify({
-      buy: 1,
-      price: 1,
-      parameters: {
-        amount: 1,
-        basis: "stake",
-        contract_type: signal,
-        currency: "USD",
-        duration: 1,
-        duration_unit: "t",
-        symbol: "R_100",
-      },
-    })
-  );
+    const recentHigh = Math.max(...prices.slice(-10));
+    const recentLow = Math.min(...prices.slice(-10));
 
-  user.lastTradeTime = Date.now();
+    const sweepBuy = latest < recentLow;
+    const sweepSell = latest > recentHigh;
 
-  user.totalTrades++;
+    // ================= SIGNAL =================
+
+    let signal = null;
+    let confidence = 0;
+
+    if ((bosUp && momentum > 0) || sweepBuy) {
+        signal = "CALL";
+        confidence = 75 + (bosUp ? 10 : 0) + (sweepBuy ? 10 : 0);
+    }
+
+    if ((bosDown && momentum < 0) || sweepSell) {
+        signal = "PUT";
+        confidence = 75 + (bosDown ? 10 : 0) + (sweepSell ? 10 : 0);
+    }
+
+    if (!signal) return;
+
+    confidence = Math.min(confidence, 95);
+
+    console.log(`📊 SMC SIGNAL ${userId}:`, signal, confidence);
+
+    // ================= EXECUTE TRADE =================
+
+    ws.send(JSON.stringify({
+        buy: 1,
+        price: 1,
+        parameters: {
+            amount: 1,
+            basis: "stake",
+            contract_type: signal,
+            currency: "USD",
+            duration: 1,
+            duration_unit: "t",
+            symbol: "R_100"
+        }
+    }));
+
+    user.lastTradeTime = now;
+    user.totalTrades++;
+
+    user.lastSignal = signal;
+    user.lastConfidence = confidence;
 }
 
 /* =========================================
@@ -322,10 +349,10 @@ function simpleBot(userId) {
 ========================================= */
 
 setInterval(() => {
-  Object.keys(users).forEach((userId) => {
-    simpleBot(userId);
-  });
-}, 5000);
+    Object.keys(users).forEach(userId => {
+        smcEngine(userId);
+    });
+}, 4000);
 
 /* =========================================
    USER INFO
