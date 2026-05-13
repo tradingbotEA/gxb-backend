@@ -81,3 +81,10 @@ app.listen(process.env.PORT || 3000, () => {
 const botRoutes = require("./routes/bot");
 
 app.use("/api/bot", botRoutes);
+
+require("dotenv").config();
+
+app.use(express.json());
+
+const botRoutes = require("./routes/bot");
+app.use("/api/bot", botRoutes);
