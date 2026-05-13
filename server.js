@@ -5,6 +5,13 @@ const admin = require("firebase-admin");
 
 const { startBotWorker } = require("./workers/botWorker");
 
+const memory = {
+    users: {},              // user state
+    pendingContracts: {},   // open trades waiting for result
+    marketPrices: [],      // price cache
+    cooldowns: {},         // trade cooldown tracking
+};
+
 const app = express();
 app.use(cors());
 app.use(express.json());
