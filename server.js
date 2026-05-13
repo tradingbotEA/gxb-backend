@@ -133,6 +133,13 @@ let priceHistory = [];
     } else {
         signal = "PUT";
     }
+        const now = Date.now();
+
+// 10 seconds cooldown
+if (now - lastTradeTime < 10000) {
+    console.log("Cooldown active - skipping trade");
+    return;
+}
 
     console.log("Signal:", signal);
 
