@@ -19,8 +19,8 @@ app.use(express.json());
 const DERIV_WS = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
 
 let ws;
-let marketPrices = [];
-const users = {};
+let memory.marketPrices = [];
+const memory.users = {};
 
 // FIREBASE INIT (env-based)
 admin.initializeApp({
@@ -53,10 +53,10 @@ function connectDeriv() {
         const data = JSON.parse(msg);
 
         if (data.tick) {
-            marketPrices.push(data.tick.quote);
+            memory.marketPrices.push(data.tick.quote);
 
-            if (marketPrices.length > 100) {
-                marketPrices.shift();
+            if (memory.marketPrices.length > 100) {
+                memory.marketPrices.shift();
             }
         }
     });
