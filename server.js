@@ -23,9 +23,20 @@ function connectDeriv() {
     });
 
     ws.on("message", (msg) => {
-        console.log(msg.toString());
-    });
-}
+    const data = JSON.parse(msg);
+
+    if (data.tick) {
+        const price = data.tick.quote;
+
+        priceHistory.push(price);
+
+        if (priceHistory.length > 50) {
+            priceHistory.shift();
+        }
+
+        console.log("Price:", price);
+    }
+});
 
 connectDeriv();
 
@@ -104,3 +115,42 @@ app.post("/stop-bot", (req, res) => {
         message: "Bot has been disabled"
     });
 });
+
+let priceHistory = [];
+
+    function simpleBot() {
+    if (priceHistory.length < 2) return;
+
+    const last = priceHistory[priceHistory.length - 1];
+    const prev = priceHistory[priceHistory.length - 2];
+
+    if (!botRunning) return;
+
+    let signal;
+
+    if (last > prev) {
+        signal = "CALL";
+    } else {
+        signal = "PUT";
+    }
+
+    console.log("Signal:", signal);
+
+    ws.send(JSON.stringify({
+        buy: 1,
+        price: 1,
+        parameters: {
+            amount: 1,
+            basis: "stake",
+            contract_type: signal,
+            currency: "USD",
+            duration: 1,
+            duration_unit: "t",
+            symbol: "R_100"
+        }
+    }));
+    }
+
+    setInterval(() => {
+    simpleBot();
+}, 5000);
