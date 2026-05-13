@@ -77,3 +77,7 @@ app.get("/", (req, res) => {
 app.listen(process.env.PORT || 3000, () => {
     console.log("Server running");
 });
+
+const botRoutes = require("./routes/bot");
+
+app.use("/api/bot", botRoutes);
