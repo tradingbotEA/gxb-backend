@@ -273,3 +273,26 @@ setInterval(async () => {
 app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
 });
+
+app.get("/firebase-test", async (req, res) => {
+    try {
+        const ref = db.collection("test").doc("connection");
+        await ref.set({
+            status: "working",
+            time: Date.now()
+        });
+
+        const doc = await ref.get();
+
+        res.json({
+            ok: true,
+            data: doc.data()
+        });
+
+    } catch (err) {
+        res.json({
+            ok: false,
+            error: err.message
+        });
+    }
+});
