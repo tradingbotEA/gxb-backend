@@ -1,3 +1,5 @@
+require("dotenv").config();
+
 const express = require("express");
 const cors = require("cors");
 const WebSocket = require("ws");
@@ -5,24 +7,19 @@ const admin = require("firebase-admin");
 
 const { startBotWorker } = require("./workers/botWorker");
 
-const memory = {
-    users: {},              // user state
-    pendingContracts: {},   // open trades waiting for result
-    marketPrices: [],      // price cache
-    cooldowns: {},         // trade cooldown tracking
-};
-
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-const DERIV_WS = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
+// ---------------- MEMORY ----------------
+const memory = {
+    users: {},
+    pendingContracts: {},
+    marketPrices: [],
+    cooldowns: {}
+};
 
-let ws;
-let memory.marketPrices = [];
-const memory.users = {};
-
-// FIREBASE INIT (env-based)
+// ---------------- FIREBASE ----------------
 admin.initializeApp({
     credential: admin.credential.cert({
         projectId: process.env.FIREBASEPROJECTID,
@@ -33,20 +30,28 @@ admin.initializeApp({
 
 const db = admin.firestore();
 
-// CONNECT DERIV
+// ---------------- DERIV WS ----------------
+const DERIV_WS = "wss://ws.binaryws.com/websockets/v3?app_id=1089";
+
+let ws;
+
 function connectDeriv() {
     ws = new WebSocket(DERIV_WS);
 
     ws.on("open", () => {
-        console.log("Connected to Deriv");
+        console.log("🔌 Connected to Deriv");
 
         ws.send(JSON.stringify({
             ticks: "R_100",
             subscribe: 1
         }));
 
-        // START ENGINE ONLY HERE
-        startBotWorker({ ws, db, users, marketPrices });
+        // START BOT ENGINE
+        startBotWorker({
+            ws,
+            db,
+            memory
+        });
     });
 
     ws.on("message", (msg) => {
@@ -62,29 +67,29 @@ function connectDeriv() {
     });
 
     ws.on("close", () => {
-        console.log("Reconnecting...");
+        console.log("⚠️ Reconnecting to Deriv...");
         setTimeout(connectDeriv, 5000);
+    });
+
+    ws.on("error", (err) => {
+        console.log("WebSocket error:", err.message);
     });
 }
 
 connectDeriv();
 
-// BASIC ROUTE
+// ---------------- ROUTES ----------------
+const botRoutes = require("./routes/bot");
+app.use("/api/bot", botRoutes);
+
+// ---------------- HEALTH CHECK ----------------
 app.get("/", (req, res) => {
-    res.send("Backend Running");
+    res.send("Backend Running ✔");
 });
 
-app.listen(process.env.PORT || 3000, () => {
-    console.log("Server running");
+// ---------------- START SERVER ----------------
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+    console.log("🚀 Server running on port", PORT);
 });
-
-const botRoutes = require("./routes/bot");
-
-app.use("/api/bot", botRoutes);
-
-require("dotenv").config();
-
-app.use(express.json());
-
-const botRoutes = require("./routes/bot");
-app.use("/api/bot", botRoutes);
