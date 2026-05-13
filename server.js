@@ -32,8 +32,19 @@ connectDeriv();
 app.post("/trade", (req, res) => {
     const { amount, type, symbol } = req.body;
 
+    // 🔒 STOP BOT CHECK (IMPORTANT)
+    if (!botRunning) {
+        return res.json({
+            status: "stopped",
+            message: "Bot is OFF. No trades allowed."
+        });
+    }
+
     if (!ws || ws.readyState !== 1) {
-        return res.json({ status: "error", message: "WebSocket not ready" });
+        return res.json({
+            status: "error",
+            message: "WebSocket not connected"
+        });
     }
 
     ws.send(JSON.stringify({
@@ -42,17 +53,17 @@ app.post("/trade", (req, res) => {
         parameters: {
             amount,
             basis: "stake",
-            contract_type: type, // CALL or PUT
+            contract_type: type,
             currency: "USD",
             duration: 5,
             duration_unit: "t",
-            symbol
+            symbol: symbol
         }
     }));
 
     res.json({
         status: "sent",
-        trade: { amount, type, symbol }
+        message: "Trade executed"
     });
 });
 app.get("/", (req, res) => {
