@@ -69,3 +69,14 @@ app.get("/status", (req, res) => {
         websocket: ws ? ws.readyState : "not connected"
     });
 });
+
+let botRunning = true;
+
+app.post("/stop-bot", (req, res) => {
+    botRunning = false;
+
+    res.json({
+        status: "stopped",
+        message: "Bot has been disabled"
+    });
+});
