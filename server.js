@@ -11,7 +11,14 @@ app.use(cors());
 app.use(express.json());
 
 /* =========================
-   SERVER + WEBSOCKET SETUP
+   SAFE ENV CHECK
+========================= */
+if (!process.env.DERIV_TOKEN) {
+    console.log("⚠️ WARNING: DERIV_TOKEN is missing");
+}
+
+/* =========================
+   HTTP + WS SERVER
 ========================= */
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -19,10 +26,8 @@ const wss = new WebSocketServer({ server });
 let clients = [];
 
 /* =========================
-   GLOBAL BOT STATE
+   BOT STATE (SAFE DEFAULTS)
 ========================= */
-let prices = [];
-
 let risk = {
     trades: 0,
     profit: 0,
@@ -32,10 +37,10 @@ let risk = {
 };
 
 /* =========================
-   DASHBOARD CONNECTIONS
+   WEBSOCKET CONNECTION
 ========================= */
 wss.on("connection", (socket) => {
-    console.log("📡 Dashboard connected");
+    console.log("📡 Client connected");
 
     clients.push(socket);
 
@@ -45,21 +50,19 @@ wss.on("connection", (socket) => {
 });
 
 /* =========================
-   SAFE LIVE PUSH FUNCTION
+   SAFE PUSH FUNCTION
 ========================= */
 function pushUpdate() {
     const payload = {
         type: "update",
-        trades: Number(risk.trades || 0),
-        profit: Number(risk.profit || 0),
-        wins: Number(risk.wins || 0),
-        losses: Number(risk.losses || 0),
+        trades: risk.trades || 0,
+        profit: risk.profit || 0,
+        wins: risk.wins || 0,
+        losses: risk.losses || 0,
         status: risk.stopped ? "stopped" : "running"
     };
 
     const data = JSON.stringify(payload);
-
-    console.log("📡 PUSH:", payload);
 
     clients.forEach(client => {
         if (client.readyState === 1) {
@@ -69,218 +72,88 @@ function pushUpdate() {
 }
 
 /* =========================
-   HEALTH CHECK
+   ROUTES
 ========================= */
+
+// Health check
 app.get("/", (req, res) => {
     res.send("Backend Running ✔");
 });
 
-/* =========================
-   STATUS API
-========================= */
+// Status
 app.get("/api/status", (req, res) => {
-    res.json({
-        bot: risk.stopped ? "stopped" : "running",
-        trades: risk.trades || 0,
-        profit: risk.profit || 0,
-        wins: risk.wins || 0,
-        losses: risk.losses || 0
-    });
+    res.json(risk);
 });
 
 /* =========================
-   DERIV TEST CONNECTION
+   SAFE DERIV TEST (NO CRASH)
 ========================= */
 app.get("/api/test-deriv", (req, res) => {
-    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
 
-    let done = false;
+    try {
+        const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
 
-    ws.on("open", () => {
-        ws.send(JSON.stringify({
-            authorize: process.env.DERIV_TOKEN
-        }));
-    });
+        let done = false;
 
-    ws.on("message", (msg) => {
-        const data = JSON.parse(msg);
+        ws.on("open", () => {
+            ws.send(JSON.stringify({
+                authorize: process.env.DERIV_TOKEN
+            }));
+        });
 
-        if (!done) {
-            done = true;
-            res.json(data);
-            ws.close();
-        }
-    });
+        ws.on("message", (msg) => {
+            const data = JSON.parse(msg);
 
-    ws.on("error", (err) => {
-        if (!done) {
-            done = true;
-            res.status(500).json({ error: err.message });
-        }
-    });
+            if (!done) {
+                done = true;
+                res.json(data);
+                ws.close();
+            }
+        });
+
+        ws.on("error", (err) => {
+            if (!done) {
+                done = true;
+                res.status(500).json({ error: err.message });
+            }
+        });
+
+    } catch (err) {
+        res.status(500).json({ error: "WebSocket failed", details: err.message });
+    }
 });
 
 /* =========================
-   RISK MANAGEMENT
-========================= */
-function canTrade() {
-    if (risk.stopped) return false;
-
-    if (risk.trades >= 20) {
-        risk.stopped = true;
-        return false;
-    }
-
-    if (risk.profit <= -10) {
-        risk.stopped = true;
-        return false;
-    }
-
-    return true;
-}
-
-/* =========================
-   PRICE MEMORY
-========================= */
-function updatePrices(price) {
-    prices.push(price);
-
-    if (prices.length > 50) {
-        prices.shift();
-    }
-}
-
-/* =========================
-   SMART STRATEGY v2
-========================= */
-function smartSignal() {
-    if (prices.length < 30) return null;
-
-    const last10 = prices.slice(-10);
-    const last20 = prices.slice(-20);
-    const last30 = prices.slice(-30);
-
-    const avg10 = last10.reduce((a, b) => a + b, 0) / last10.length;
-    const avg20 = last20.reduce((a, b) => a + b, 0) / last20.length;
-    const avg30 = last30.reduce((a, b) => a + b, 0) / last30.length;
-
-    const trend = avg10 - avg30;
-    const momentum = avg10 - avg20;
-
-    const volatility = Math.max(...last10) - Math.min(...last10);
-
-    if (volatility < 0.3) return null;
-    if (Math.abs(trend) < 0.2) return null;
-
-    if (trend > 0 && momentum > 0) return "CALL";
-    if (trend < 0 && momentum < 0) return "PUT";
-
-    return null;
-}
-
-/* =========================
-   PLACE TRADE
-========================= */
-function placeTrade(ws, signal) {
-    ws.send(JSON.stringify({
-        buy: 1,
-        price: 1,
-        parameters: {
-            amount: 1,
-            basis: "stake",
-            contract_type: signal,
-            currency: "USD",
-            duration: 1,
-            duration_unit: "m",
-            symbol: "R_100"
-        }
-    }));
-}
-
-/* =========================
-   MAIN TRADE ENDPOINT
+   SIMPLE TRADE SIMULATION (SAFE)
+   (prevents crash while testing)
 ========================= */
 app.get("/api/trade", (req, res) => {
-    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
 
-    let responded = false;
+    try {
+        risk.trades += 1;
 
-    ws.on("open", () => {
-        ws.send(JSON.stringify({
-            authorize: process.env.DERIV_TOKEN
-        }));
-    });
+        // fake profit for stability testing
+        const profit = Math.random() > 0.5 ? 1 : -1;
 
-    ws.on("message", (msg) => {
-        const data = JSON.parse(msg);
+        risk.profit += profit;
 
-        /* PRICE FEED (safe optional) */
-        if (data.tick && data.tick.quote) {
-            updatePrices(data.tick.quote);
-        }
+        if (profit > 0) risk.wins++;
+        else risk.losses++;
 
-        /* AUTH */
-        if (data.msg_type === "authorize") {
+        pushUpdate();
 
-            if (!canTrade()) {
-                ws.close();
-                return;
-            }
+        res.json({
+            status: "TRADE SIMULATED (SAFE MODE)",
+            profit
+        });
 
-            const signal = smartSignal();
-
-            if (!signal) {
-                ws.close();
-                return;
-            }
-
-            risk.trades++;
-            pushUpdate();
-
-            placeTrade(ws, signal);
-        }
-
-        /* PROFIT RESULT */
-        if (data.msg_type === "proposal_open_contract") {
-
-            const contract = data.proposal_open_contract;
-
-            if (contract && contract.is_sold) {
-
-                const profit = Number(contract.profit || 0);
-
-                risk.profit += profit;
-
-                if (profit > 0) risk.wins++;
-                else risk.losses++;
-
-                pushUpdate();
-            }
-        }
-
-        /* RESPONSE */
-        if (data.msg_type === "buy" && !responded) {
-            responded = true;
-
-            res.json({
-                status: "TRADE EXECUTED",
-                trade: data
-            });
-
-            ws.close();
-        }
-    });
-
-    ws.on("error", (err) => {
-        if (!responded) {
-            responded = true;
-            res.status(500).json({ error: err.message });
-        }
-    });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /* =========================
-   START SERVER
+   START SERVER (SAFE)
 ========================= */
 const PORT = process.env.PORT || 3000;
 
