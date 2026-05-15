@@ -39,26 +39,50 @@ app.get("/api/status", (req, res) => {
 const WebSocket = require("ws");
 
 app.get("/api/test-deriv", (req, res) => {
-    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3");
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
 
-    ws.onopen = () => {
+    let responded = false;
+
+    ws.on("open", () => {
         console.log("✅ Connected to Deriv");
 
         ws.send(JSON.stringify({
             authorize: process.env.DERIV_TOKEN
         }));
-    };
+    });
 
-    ws.onmessage = (msg) => {
-        const data = JSON.parse(msg.data);
-        console.log("DERIV RESPONSE:", data);
+    ws.on("message", (message) => {
+        const data = JSON.parse(message);
 
-        res.json(data);
-        ws.close();
-    };
+        console.log("📩 Deriv Response:", data);
 
-    ws.onerror = (err) => {
+        if (!responded) {
+            responded = true;
+            res.json(data);
+            ws.close();
+        }
+    });
+
+    ws.on("error", (err) => {
         console.log("❌ WS ERROR:", err);
-        res.status(500).json({ error: "Connection failed" });
-    };
+
+        if (!responded) {
+            responded = true;
+            res.status(500).json({
+                error: "WebSocket error",
+                details: err.message
+            });
+        }
+    });
+
+    ws.on("close", () => {
+        console.log("🔌 Connection closed");
+
+        if (!responded) {
+            responded = true;
+            res.status(500).json({
+                error: "Connection closed before response"
+            });
+        }
+    });
 });
