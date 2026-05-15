@@ -2,117 +2,53 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const WebSocket = require("ws");
 
 const app = express();
 
 app.use(cors());
 app.use(express.json());
 
-// HEALTH CHECK
+/* =========================
+   GLOBAL BOT STATE
+========================= */
+let risk = {
+    trades: 0,
+    profit: 0,
+    wins: 0,
+    losses: 0,
+    stopped: false
+};
+
+/* =========================
+   HEALTH CHECK
+========================= */
 app.get("/", (req, res) => {
     res.send("Backend Running ✔");
 });
 
-// ROUTES (ONLY IF FILE EXISTS)
-try {
-    const botRoutes = require("./routes/bot");
-    app.use("/api/bot", botRoutes);
-} catch (err) {
-    console.log("⚠️ Bot routes not loaded:", err.message);
-}
-
-// START SERVER
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-    console.log("🚀 Server running on port", PORT);
-});
-
+/* =========================
+   STATUS API (FRONTEND)
+========================= */
 app.get("/api/status", (req, res) => {
     res.json({
-        bot: "running",
-        balance: 0,
-        trades: 0
+        bot: risk.stopped ? "stopped" : "running",
+        balance: risk.profit,
+        trades: risk.trades,
+        wins: risk.wins,
+        losses: risk.losses
     });
 });
 
-const WebSocket = require("ws");
-
+/* =========================
+   DERIV CONNECTION TEST
+========================= */
 app.get("/api/test-deriv", (req, res) => {
     const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
 
-    let responded = false;
+    let done = false;
 
     ws.on("open", () => {
-        console.log("✅ Connected to Deriv");
-
-        ws.send(JSON.stringify({
-            authorize: process.env.DERIV_TOKEN
-        }));
-    });
-
-    ws.on("message", (message) => {
-        const data = JSON.parse(message);
-
-        console.log("📩 Deriv Response:", data);
-
-        if (!responded) {
-            responded = true;
-            res.json(data);
-            ws.close();
-        }
-    });
-
-    ws.on("error", (err) => {
-        console.log("❌ WS ERROR:", err);
-
-        if (!responded) {
-            responded = true;
-            res.status(500).json({
-                error: "WebSocket error",
-                details: err.message
-            });
-        }
-    });
-
-    ws.on("close", () => {
-        console.log("🔌 Connection closed");
-
-        if (!responded) {
-            responded = true;
-            res.status(500).json({
-                error: "Connection closed before response"
-            });
-        }
-    });
-});
-
-function placeTrade(ws) {
-    ws.send(JSON.stringify({
-        buy: 1,
-        price: 1,
-        parameters: {
-            amount: 1,              // $1 trade
-            basis: "stake",
-            contract_type: "CALL", // UP trade
-            currency: "USD",
-            duration: 1,
-            duration_unit: "m",    // 1 minute
-            symbol: "R_100"        // synthetic index
-        }
-    }));
-}
-
-const WebSocket = require("ws");
-
-app.get("/api/trade", (req, res) => {
-    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
-
-    let responded = false;
-
-    ws.on("open", () => {
-        console.log("🚀 Connecting to Deriv...");
-
         ws.send(JSON.stringify({
             authorize: process.env.DERIV_TOKEN
         }));
@@ -121,16 +57,113 @@ app.get("/api/trade", (req, res) => {
     ws.on("message", (msg) => {
         const data = JSON.parse(msg);
 
-        console.log("📩", data);
+        if (!done) {
+            done = true;
+            res.json(data);
+            ws.close();
+        }
+    });
 
-        // STEP 1: AUTH SUCCESS
+    ws.on("error", (err) => {
+        if (!done) {
+            done = true;
+            res.status(500).json({
+                error: err.message
+            });
+        }
+    });
+});
+
+/* =========================
+   RISK CONTROL
+========================= */
+function canTrade() {
+    if (risk.stopped) return false;
+
+    if (risk.trades >= 20) {
+        risk.stopped = true;
+        return false;
+    }
+
+    if (risk.profit <= -10) {
+        risk.stopped = true;
+        return false;
+    }
+
+    return true;
+}
+
+/* =========================
+   PLACE TRADE FUNCTION
+========================= */
+function placeTrade(ws) {
+    ws.send(JSON.stringify({
+        buy: 1,
+        price: 1,
+        parameters: {
+            amount: 1,
+            basis: "stake",
+            contract_type: "CALL",
+            currency: "USD",
+            duration: 1,
+            duration_unit: "m",
+            symbol: "R_100"
+        }
+    }));
+}
+
+/* =========================
+   MAIN TRADE ENDPOINT
+========================= */
+app.get("/api/trade", (req, res) => {
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
+
+    let responded = false;
+
+    ws.on("open", () => {
+        ws.send(JSON.stringify({
+            authorize: process.env.DERIV_TOKEN
+        }));
+    });
+
+    ws.on("message", (msg) => {
+        const data = JSON.parse(msg);
+
+        /* AUTH SUCCESS */
         if (data.msg_type === "authorize") {
-            console.log("✅ Authorized");
 
-            placeTrade(ws); // 🔥 EXECUTE TRADE
+            if (!canTrade()) {
+                ws.close();
+                return;
+            }
+
+            risk.trades++;
+            placeTrade(ws);
         }
 
-        // STEP 2: TRADE EXECUTED
+        /* PROFIT / LOSS TRACKING */
+        if (data.msg_type === "proposal_open_contract") {
+
+            const contract = data.proposal_open_contract;
+
+            if (contract && contract.is_sold) {
+
+                const profit = contract.profit || 0;
+
+                risk.profit += profit;
+
+                if (profit > 0) {
+                    risk.wins++;
+                } else {
+                    risk.losses++;
+                }
+
+                console.log("💰 Profit:", profit);
+                console.log("📊 Total Profit:", risk.profit);
+            }
+        }
+
+        /* TRADE EXECUTED */
         if (data.msg_type === "buy" && !responded) {
             responded = true;
 
@@ -144,8 +177,6 @@ app.get("/api/trade", (req, res) => {
     });
 
     ws.on("error", (err) => {
-        console.log("❌ Error:", err.message);
-
         if (!responded) {
             responded = true;
             res.status(500).json({
@@ -153,4 +184,13 @@ app.get("/api/trade", (req, res) => {
             });
         }
     });
+});
+
+/* =========================
+   START SERVER
+========================= */
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, () => {
+    console.log("🚀 Server running on port", PORT);
 });
