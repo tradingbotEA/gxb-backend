@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 /* =========================
-   HTTP + WEBSOCKET SERVER
+   SERVER + WEBSOCKET SETUP
 ========================= */
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -19,7 +19,7 @@ const wss = new WebSocketServer({ server });
 let clients = [];
 
 /* =========================
-   GLOBAL STATE
+   GLOBAL BOT STATE
 ========================= */
 let prices = [];
 
@@ -32,7 +32,7 @@ let risk = {
 };
 
 /* =========================
-   DASHBOARD CONNECTION
+   DASHBOARD CONNECTIONS
 ========================= */
 wss.on("connection", (socket) => {
     console.log("📡 Dashboard connected");
@@ -45,17 +45,21 @@ wss.on("connection", (socket) => {
 });
 
 /* =========================
-   LIVE PUSH FUNCTION
+   SAFE LIVE PUSH FUNCTION
 ========================= */
 function pushUpdate() {
-    const data = JSON.stringify({
+    const payload = {
         type: "update",
-        trades: risk.trades,
-        profit: risk.profit,
-        wins: risk.wins,
-        losses: risk.losses,
+        trades: Number(risk.trades || 0),
+        profit: Number(risk.profit || 0),
+        wins: Number(risk.wins || 0),
+        losses: Number(risk.losses || 0),
         status: risk.stopped ? "stopped" : "running"
-    });
+    };
+
+    const data = JSON.stringify(payload);
+
+    console.log("📡 PUSH:", payload);
 
     clients.forEach(client => {
         if (client.readyState === 1) {
@@ -77,10 +81,10 @@ app.get("/", (req, res) => {
 app.get("/api/status", (req, res) => {
     res.json({
         bot: risk.stopped ? "stopped" : "running",
-        trades: risk.trades,
-        profit: risk.profit,
-        wins: risk.wins,
-        losses: risk.losses
+        trades: risk.trades || 0,
+        profit: risk.profit || 0,
+        wins: risk.wins || 0,
+        losses: risk.losses || 0
     });
 });
 
@@ -136,11 +140,14 @@ function canTrade() {
 }
 
 /* =========================
-   MARKET DATA
+   PRICE MEMORY
 ========================= */
 function updatePrices(price) {
     prices.push(price);
-    if (prices.length > 50) prices.shift();
+
+    if (prices.length > 50) {
+        prices.shift();
+    }
 }
 
 /* =========================
@@ -172,7 +179,7 @@ function smartSignal() {
 }
 
 /* =========================
-   TRADE FUNCTION
+   PLACE TRADE
 ========================= */
 function placeTrade(ws, signal) {
     ws.send(JSON.stringify({
@@ -207,7 +214,7 @@ app.get("/api/trade", (req, res) => {
     ws.on("message", (msg) => {
         const data = JSON.parse(msg);
 
-        /* PRICE FEED (optional future expansion) */
+        /* PRICE FEED (safe optional) */
         if (data.tick && data.tick.quote) {
             updatePrices(data.tick.quote);
         }
@@ -233,14 +240,14 @@ app.get("/api/trade", (req, res) => {
             placeTrade(ws, signal);
         }
 
-        /* PROFIT TRACKING */
+        /* PROFIT RESULT */
         if (data.msg_type === "proposal_open_contract") {
 
             const contract = data.proposal_open_contract;
 
             if (contract && contract.is_sold) {
 
-                const profit = contract.profit || 0;
+                const profit = Number(contract.profit || 0);
 
                 risk.profit += profit;
 
