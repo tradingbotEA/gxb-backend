@@ -35,3 +35,30 @@ app.get("/api/status", (req, res) => {
         trades: 0
     });
 });
+
+const WebSocket = require("ws");
+
+app.get("/api/test-deriv", (req, res) => {
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3");
+
+    ws.onopen = () => {
+        console.log("✅ Connected to Deriv");
+
+        ws.send(JSON.stringify({
+            authorize: process.env.DERIV_TOKEN
+        }));
+    };
+
+    ws.onmessage = (msg) => {
+        const data = JSON.parse(msg.data);
+        console.log("DERIV RESPONSE:", data);
+
+        res.json(data);
+        ws.close();
+    };
+
+    ws.onerror = (err) => {
+        console.log("❌ WS ERROR:", err);
+        res.status(500).json({ error: "Connection failed" });
+    };
+});
