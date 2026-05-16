@@ -213,3 +213,25 @@ app.post("/api/stop", (req, res) => {
         });
     }
 });
+
+app.post("/api/start", (req, res) => {
+    try {
+        risk.stopped = false;
+
+        console.log("🟢 BOT STARTED");
+
+        pushUpdate();
+
+        res.json({
+            success: true
+        });
+
+    } catch (err) {
+        console.log("START ERROR:", err);
+
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
