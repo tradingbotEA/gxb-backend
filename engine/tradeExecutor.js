@@ -1,189 +1,133 @@
 // ========================================
-// EXECUTE TRADE FUNCTION
+// INSTITUTIONAL TRADE EXECUTOR (STEP 5)
+// Multi-user + SMC-ready + Deriv-safe
 // ========================================
 
 async function executeTrade(userId, signal) {
 
     try {
 
-        // ====================================
-        // FIRESTORE USER REFERENCE
-        // ====================================
-
+        // ================================
+        // USER FETCH
+        // ================================
         const userRef = db.collection("users").doc(userId);
-
         const userSnap = await userRef.get();
 
-        // ====================================
-        // USER EXISTS CHECK
-        // ====================================
-
         if (!userSnap.exists) {
-
             console.log("❌ USER NOT FOUND:", userId);
-
             return;
         }
-
-        // ====================================
-        // USER DATA
-        // ====================================
 
         const user = userSnap.data();
 
-        // ====================================
-        // BOT STATUS CHECK
-        // ====================================
-
+        // ================================
+        // BOT ENABLE CHECK
+        // ================================
         if (!user.botRunning) {
-
-            console.log("⛔ BOT STOPPED:", userId);
-
+            console.log("⛔ BOT DISABLED FOR USER:", userId);
             return;
         }
 
-        // ====================================
-        // WEBSOCKET CHECK
-        // ====================================
-
+        // ================================
+        // DERIV CONNECTION CHECK
+        // ================================
         if (!ws || ws.readyState !== 1) {
-
-            console.log("❌ DERIV WS OFFLINE");
-
+            console.log("❌ DERIV WS NOT CONNECTED");
             return;
         }
 
-        // ====================================
-        // COOLDOWN SYSTEM
-        // ====================================
-
+        // ================================
+        // COOLDOWN CONTROL
+        // ================================
         const now = Date.now();
+        const cooldown = user.cooldown || 8000;
 
-        const cooldown = 8000;
-
-        if (!user.lastTradeTime) {
-            user.lastTradeTime = 0;
-        }
-
-        const remainingCooldown =
-            now - user.lastTradeTime;
-
-        if (remainingCooldown < cooldown) {
-
-            console.log("⏳ COOLDOWN ACTIVE");
-
+        if (user.lastTradeTime && (now - user.lastTradeTime < cooldown)) {
+            console.log("⏳ COOLDOWN ACTIVE:", userId);
             return;
         }
 
-        // ====================================
-        // USER RISK SETTINGS
-        // ====================================
+        // ================================
+        // RISK SETTINGS (USER BASED)
+        // ================================
+        const tradeAmount = user.tradeAmount || 1;
+        const tradeSymbol = user.symbol || "R_100";
+        const duration = user.duration || 1;
+        const durationUnit = user.durationUnit || "t";
 
-        const tradeAmount =
-            user.tradeAmount || 1;
+        // ================================
+        // CONFIDENCE FROM SMC SIGNAL
+        // ================================
+        const confidence = signal.confidence || 80;
 
-        const tradeSymbol =
-            user.symbol || "R_100";
+        // Optional: block weak signals
+        if (confidence < 60) {
+            console.log("⚠️ LOW CONFIDENCE TRADE BLOCKED");
+            return;
+        }
 
-        const tradeDuration =
-            user.duration || 1;
-
-        const tradeDurationUnit =
-            user.durationUnit || "t";
-
-        // ====================================
+        // ================================
         // TRADE OBJECT
-        // ====================================
-
+        // ================================
         const trade = {
+            userId,
+            signal: signal.signal,
 
-            // USER
-            userId: userId,
-
-            // STRATEGY
-            signal: signal,
-
-            // TRADE CONFIG
             amount: tradeAmount,
             symbol: tradeSymbol,
 
-            duration: tradeDuration,
-            durationUnit: tradeDurationUnit,
+            duration,
+            durationUnit,
 
-            // STATUS
             status: "PENDING",
 
-            // ANALYTICS
-            confidence:
-                user.lastConfidence || 80,
+            confidence,
 
-            // TIME
             createdAt: now,
 
-            // RESULTS
-            profit: 0,
-            result: null
+            result: null,
+            profit: 0
         };
 
-        // ====================================
-        // SAVE TEMP MEMORY
-        // ====================================
-
+        // ================================
+        // STORE LAST TRADE MEMORY
+        // ================================
         memory.lastTrade = trade;
 
-        console.log("📤 REQUESTING PROPOSAL:", trade);
+        console.log("📤 SENDING PROPOSAL:", trade);
 
-        // ====================================
+        // ================================
         // DERIV PROPOSAL REQUEST
-        // ====================================
-
+        // ================================
         ws.send(JSON.stringify({
-
             proposal: 1,
-
             amount: trade.amount,
-
             basis: "stake",
-
             contract_type: trade.signal,
-
             currency: "USD",
-
             duration: trade.duration,
-
             duration_unit: trade.durationUnit,
-
             symbol: trade.symbol
-
         }));
 
-        // ====================================
+        // ================================
         // UPDATE USER STATS
-        // ====================================
-
+        // ================================
         user.lastTradeTime = now;
+        user.totalTrades = (user.totalTrades || 0) + 1;
 
-        if (!user.totalTrades) {
-            user.totalTrades = 0;
-        }
+        user.lastConfidence = confidence;
 
-        user.totalTrades += 1;
+        // ================================
+        // SAVE USER STATE
+        // ================================
+        await userRef.set(user, { merge: true });
 
-        // ====================================
-        // SAVE USER
-        // ====================================
-
-        await userRef.set(user, {
-            merge: true
-        });
-
-        console.log("✅ TRADE EXECUTION STARTED");
+        console.log("✅ TRADE SENT SUCCESSFULLY");
 
     } catch (err) {
+        console.log("❌ EXECUTE TRADE ERROR:", err.message);
+    }
+}
 
-        console.log(
-            "❌ EXECUTE TRADE ERROR:",
-            err.message
-        );
-    }
-    }
+module.exports = { executeTrade };
