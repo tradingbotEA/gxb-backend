@@ -16,29 +16,23 @@ app.use(express.json());
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-let clients = [];
+/* =========================
+   USER SESSIONS (STEP 3 CORE)
+========================= */
+const userSessions = {};
 
 /* =========================
-   SAFE DERIV TOKEN CHECK
+   DERIV TOKEN (TEMP GLOBAL - STEP 4 WILL MOVE TO FIREBASE)
 ========================= */
 if (!process.env.DERIV_TOKEN) {
     console.log("⚠️ DERIV_TOKEN is missing");
 }
 
 /* =========================
-   BOT STATE
+   WEBSOCKET CLIENTS (DASHBOARD UI)
 ========================= */
-let risk = {
-    trades: 0,
-    profit: 0,
-    wins: 0,
-    losses: 0,
-    stopped: true
-};
+let clients = [];
 
-/* =========================
-   WEBSOCKET CLIENTS
-========================= */
 wss.on("connection", (socket) => {
     console.log("📡 Client connected");
     clients.push(socket);
@@ -49,16 +43,14 @@ wss.on("connection", (socket) => {
 });
 
 /* =========================
-   PUSH LIVE UPDATE
+   PUSH GLOBAL UI UPDATE
 ========================= */
-function pushUpdate() {
+function pushUpdate(uid = null) {
+
     const payload = JSON.stringify({
         type: "update",
-        trades: risk.trades,
-        profit: risk.profit,
-        wins: risk.wins,
-        losses: risk.losses,
-        status: risk.stopped ? "stopped" : "running"
+        uid,
+        session: uid ? userSessions[uid] : null
     });
 
     clients.forEach(client => {
@@ -69,127 +61,129 @@ function pushUpdate() {
 }
 
 /* =========================
-   BACKGROUND BOT LOOP
+   DERIV CONNECTION PER USER
 ========================= */
-setInterval(() => {
-    if (risk.stopped) return;
+function connectDeriv(uid, token) {
 
-    risk.trades++;
+    const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
 
-    const profit = Math.random() > 0.5 ? 1 : -1;
+    userSessions[uid] = {
+        ws,
+        running: true,
+        trades: 0,
+        profit: 0,
+        wins: 0,
+        losses: 0,
+        connected: false
+    };
 
-    risk.profit += profit;
+    ws.on("open", () => {
+        ws.send(JSON.stringify({
+            authorize: token
+        }));
+    });
 
-    if (profit > 0) risk.wins++;
-    else risk.losses++;
+    ws.on("message", (msg) => {
+        const data = JSON.parse(msg);
 
-    console.log("📊 Trade executed");
+        const session = userSessions[uid];
+        if (!session) return;
 
-    pushUpdate();
+        // AUTH SUCCESS
+        if (data.msg_type === "authorize") {
+            session.connected = true;
+            console.log("✔ Deriv connected:", uid);
+        }
 
-}, 3000);
+        // LIVE TRADE UPDATE (placeholder for Step 4)
+        if (data.msg_type === "buy" || data.msg_type === "sell") {
+            session.trades++;
+        }
+
+        pushUpdate(uid);
+    });
+
+    ws.on("close", () => {
+        delete userSessions[uid];
+    });
+
+    ws.on("error", (err) => {
+        console.log("Deriv error:", err.message);
+    });
+}
 
 /* =========================
-   ROUTES
-========================= */
-
-// Health check
-app.get("/", (req, res) => {
-    res.send("Backend Running ✔");
-});
-
-// Status
-app.get("/api/status", (req, res) => {
-    res.json(risk);
-});
-
-/* =========================
-   START BOT
+   START BOT (PER USER)
 ========================= */
 app.post("/api/start", (req, res) => {
-    try {
-        risk.stopped = false;
 
-        console.log("🟢 BOT STARTED");
+    const { uid } = req.body;
 
-        pushUpdate();
-
-        res.json({
-            success: true,
-            status: "running"
-        });
-
-    } catch (err) {
-        console.log("START ERROR:", err);
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+    if (!uid) {
+        return res.status(400).json({ error: "Missing UID" });
     }
+
+    const token = process.env.DERIV_TOKEN;
+
+    connectDeriv(uid, token);
+
+    console.log("🟢 BOT STARTED FOR:", uid);
+
+    res.json({
+        success: true,
+        status: "running",
+        uid
+    });
 });
 
 /* =========================
-   STOP BOT
+   STOP BOT (PER USER)
 ========================= */
 app.post("/api/stop", (req, res) => {
-    try {
-        risk.stopped = true;
 
-        console.log("🔴 BOT STOPPED");
+    const { uid } = req.body;
 
-        pushUpdate();
+    const session = userSessions[uid];
 
-        res.json({
-            success: true,
-            status: "stopped"
-        });
-
-    } catch (err) {
-        console.log("STOP ERROR:", err);
-
-        res.status(500).json({
-            success: false,
-            error: err.message
-        });
+    if (session) {
+        session.ws.close();
+        delete userSessions[uid];
     }
+
+    console.log("🔴 BOT STOPPED FOR:", uid);
+
+    res.json({
+        success: true,
+        status: "stopped",
+        uid
+    });
 });
 
 /* =========================
-   DERIV TEST (SAFE)
+   USER STATUS API
 ========================= */
-app.get("/api/test-deriv", (req, res) => {
-    try {
-        const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
+app.get("/api/status/:uid", (req, res) => {
 
-        let done = false;
+    const uid = req.params.uid;
+    const session = userSessions[uid];
 
-        ws.on("open", () => {
-            ws.send(JSON.stringify({
-                authorize: process.env.DERIV_TOKEN
-            }));
+    if (!session) {
+        return res.json({
+            connected: false,
+            running: false,
+            trades: 0,
+            profit: 0
         });
-
-        ws.on("message", (msg) => {
-            const data = JSON.parse(msg);
-
-            if (!done) {
-                done = true;
-                res.json(data);
-                ws.close();
-            }
-        });
-
-        ws.on("error", (err) => {
-            if (!done) {
-                done = true;
-                res.status(500).json({ error: err.message });
-            }
-        });
-
-    } catch (err) {
-        res.status(500).json({ error: err.message });
     }
+
+    res.json(session);
+});
+
+/* =========================
+   HEALTH CHECK
+========================= */
+app.get("/", (req, res) => {
+    res.send("Backend Running ✔ (Step 3 Multi-User Mode)");
 });
 
 /* =========================
