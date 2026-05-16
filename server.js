@@ -160,3 +160,56 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log("🚀 Server running on port", PORT);
 });
+
+/* =========================
+   START BOT
+========================= */
+app.post("/api/start", (req, res) => {
+    try {
+        risk.stopped = false;
+
+        console.log("🟢 BOT STARTED");
+
+        pushUpdate();
+
+        res.json({
+            success: true,
+            status: "running"
+        });
+
+    } catch (err) {
+        console.log("START ERROR:", err);
+
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
+
+
+/* =========================
+   STOP BOT
+========================= */
+app.post("/api/stop", (req, res) => {
+    try {
+        risk.stopped = true;
+
+        console.log("🔴 BOT STOPPED");
+
+        pushUpdate();
+
+        res.json({
+            success: true,
+            status: "stopped"
+        });
+
+    } catch (err) {
+        console.log("STOP ERROR:", err);
+
+        res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
+});
