@@ -17,24 +17,17 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
 /* =========================
-   USER SESSIONS (STEP 3 CORE)
+   ACTIVE USER SESSIONS
 ========================= */
 const userSessions = {};
 
 /* =========================
-   DERIV TOKEN (TEMP GLOBAL - STEP 4 WILL MOVE TO FIREBASE)
-========================= */
-if (!process.env.DERIV_TOKEN) {
-    console.log("⚠️ DERIV_TOKEN is missing");
-}
-
-/* =========================
-   WEBSOCKET CLIENTS (DASHBOARD UI)
+   WEB DASHBOARD CLIENTS
 ========================= */
 let clients = [];
 
 wss.on("connection", (socket) => {
-    console.log("📡 Client connected");
+    console.log("📡 Dashboard connected");
     clients.push(socket);
 
     socket.on("close", () => {
@@ -43,10 +36,9 @@ wss.on("connection", (socket) => {
 });
 
 /* =========================
-   PUSH GLOBAL UI UPDATE
+   PUSH LIVE UPDATE (PER USER)
 ========================= */
 function pushUpdate(uid = null) {
-
     const payload = JSON.stringify({
         type: "update",
         uid,
@@ -61,23 +53,38 @@ function pushUpdate(uid = null) {
 }
 
 /* =========================
-   DERIV CONNECTION PER USER
+   VALIDATE UID (CRITICAL SECURITY)
+========================= */
+function validateUID(uid) {
+    return uid && typeof uid === "string" && uid.length > 10;
+}
+
+/* =========================
+   CREATE DERIV SESSION PER USER
 ========================= */
 function connectDeriv(uid, token) {
+
+    if (userSessions[uid]?.ws) {
+        console.log("⚠️ Bot already running for:", uid);
+        return;
+    }
 
     const ws = new WebSocket("wss://ws.binaryws.com/websockets/v3?app_id=1089");
 
     userSessions[uid] = {
         ws,
         running: true,
+        connected: false,
         trades: 0,
         profit: 0,
         wins: 0,
         losses: 0,
-        connected: false
+        lastUpdate: Date.now()
     };
 
     ws.on("open", () => {
+        console.log("🔌 Connecting Deriv:", uid);
+
         ws.send(JSON.stringify({
             authorize: token
         }));
@@ -92,44 +99,67 @@ function connectDeriv(uid, token) {
         // AUTH SUCCESS
         if (data.msg_type === "authorize") {
             session.connected = true;
-            console.log("✔ Deriv connected:", uid);
+            console.log("✅ Authorized:", uid);
         }
 
-        // LIVE TRADE UPDATE (placeholder for Step 4)
-        if (data.msg_type === "buy" || data.msg_type === "sell") {
+        // TRADE UPDATE
+        if (data.msg_type === "buy") {
             session.trades++;
         }
 
+        session.lastUpdate = Date.now();
         pushUpdate(uid);
     });
 
     ws.on("close", () => {
+        console.log("🔴 Disconnected:", uid);
         delete userSessions[uid];
+        pushUpdate(uid);
     });
 
     ws.on("error", (err) => {
-        console.log("Deriv error:", err.message);
+        console.log("❌ Deriv error:", err.message);
     });
 }
 
 /* =========================
-   START BOT (PER USER)
+   START BOT (SAFE)
 ========================= */
 app.post("/api/start", (req, res) => {
 
     const { uid } = req.body;
 
-    if (!uid) {
-        return res.status(400).json({ error: "Missing UID" });
+    // VALIDATION
+    if (!validateUID(uid)) {
+        return res.status(400).json({
+            success: false,
+            error: "Missing or invalid UID"
+        });
     }
 
     const token = process.env.DERIV_TOKEN;
 
+    if (!token) {
+        return res.status(500).json({
+            success: false,
+            error: "DERIV_TOKEN missing"
+        });
+    }
+
+    // PREVENT DOUBLE START
+    if (userSessions[uid]?.running) {
+        return res.json({
+            success: true,
+            status: "already_running",
+            uid
+        });
+    }
+
+    console.log("🟢 START BOT:", uid);
+
     connectDeriv(uid, token);
 
-    console.log("🟢 BOT STARTED FOR:", uid);
-
-    res.json({
+    return res.json({
         success: true,
         status: "running",
         uid
@@ -137,34 +167,70 @@ app.post("/api/start", (req, res) => {
 });
 
 /* =========================
-   STOP BOT (PER USER)
+   STOP BOT (SAFE)
 ========================= */
 app.post("/api/stop", (req, res) => {
 
     const { uid } = req.body;
 
-    const session = userSessions[uid];
-
-    if (session) {
-        session.ws.close();
-        delete userSessions[uid];
+    if (!validateUID(uid)) {
+        return res.status(400).json({
+            success: false,
+            error: "Missing or invalid UID"
+        });
     }
 
-    console.log("🔴 BOT STOPPED FOR:", uid);
+    const session = userSessions[uid];
 
-    res.json({
-        success: true,
-        status: "stopped",
-        uid
-    });
+    if (!session) {
+        return res.json({
+            success: true,
+            status: "not_running",
+            uid
+        });
+    }
+
+    try {
+        session.running = false;
+
+        if (session.ws) {
+            session.ws.close();
+        }
+
+        delete userSessions[uid];
+
+        console.log("🔴 STOP BOT:", uid);
+
+        pushUpdate(uid);
+
+        return res.json({
+            success: true,
+            status: "stopped",
+            uid
+        });
+
+    } catch (err) {
+        return res.status(500).json({
+            success: false,
+            error: err.message
+        });
+    }
 });
 
 /* =========================
-   USER STATUS API
+   USER STATUS
 ========================= */
 app.get("/api/status/:uid", (req, res) => {
 
     const uid = req.params.uid;
+
+    if (!validateUID(uid)) {
+        return res.status(400).json({
+            success: false,
+            error: "Invalid UID"
+        });
+    }
+
     const session = userSessions[uid];
 
     if (!session) {
@@ -176,14 +242,14 @@ app.get("/api/status/:uid", (req, res) => {
         });
     }
 
-    res.json(session);
+    return res.json(session);
 });
 
 /* =========================
    HEALTH CHECK
 ========================= */
 app.get("/", (req, res) => {
-    res.send("Backend Running ✔ (Step 3 Multi-User Mode)");
+    res.send("🚀 Multi-User Deriv Bot Backend Running (PRO MODE)");
 });
 
 /* =========================
