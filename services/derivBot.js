@@ -1,14 +1,24 @@
+// ========================================
+// INSTITUTIONAL DERIV BOT ENGINE (STEP 5)
+// Multi-user + SMC-ready + scalable
+// ========================================
+
 const WebSocket = require("ws");
 
 class DerivBot {
     constructor(token) {
+
         this.token = token;
         this.ws = null;
 
-        // C — KEEP CONNECTION ALIVE (heartbeat)
+        this.isAuthorized = false;
+
         this.startHeartbeat();
     }
 
+    // ========================================
+    // CONNECT + AUTH
+    // ========================================
     connect() {
         return new Promise((resolve, reject) => {
 
@@ -16,19 +26,30 @@ class DerivBot {
                 "wss://ws.derivws.com/websockets/v3?app_id=1089"
             );
 
-            // A — CONNECTION OPEN
+            // ================================
+            // OPEN CONNECTION
+            // ================================
             this.ws.on("open", () => {
-                console.log("🔌 Connected to Deriv WebSocket");
+                console.log("🔌 Connected to Deriv");
 
-                // AUTHORIZE
                 this.ws.send(JSON.stringify({
                     authorize: this.token
                 }));
             });
 
-            // B — MESSAGE HANDLER (AUTH + TRADES)
+            // ================================
+            // MESSAGE HANDLER
+            // ================================
             this.ws.on("message", (msg) => {
-                const data = JSON.parse(msg);
+
+                let data;
+
+                try {
+                    data = JSON.parse(msg);
+                } catch (err) {
+                    console.log("Invalid JSON:", msg);
+                    return;
+                }
 
                 // ❌ ERROR HANDLING
                 if (data.error) {
@@ -39,59 +60,101 @@ class DerivBot {
 
                 // 🔐 AUTH SUCCESS
                 if (data.authorize) {
-                    console.log("✅ Authorized successfully");
-                    console.log("Login ID:", data.authorize.loginid);
+                    this.isAuthorized = true;
 
-                    resolve(); // bot ready
+                    console.log("✅ Authorized:", data.authorize.loginid);
+
+                    resolve();
                 }
 
-                // 💰 TRADE CONFIRMATION
+                // 💰 PROPOSAL RESPONSE (IMPORTANT FOR STEP 5)
+                if (data.proposal) {
+                    console.log("📊 Proposal received:", data.proposal.id);
+                }
+
+                // 💰 BUY CONFIRMATION
                 if (data.buy) {
-                    console.log("💰 Trade executed successfully");
-                    console.log(data.buy);
+                    console.log("💰 Trade executed:", data.buy.contract_id);
+                }
+
+                // 📉 CONTRACT UPDATE
+                if (data.profit_table) {
+                    console.log("📊 Profit update received");
                 }
             });
 
+            // ================================
+            // ERROR HANDLER
+            // ================================
             this.ws.on("error", (err) => {
-                console.log("WebSocket Error:", err.message);
+                console.log("❌ WebSocket Error:", err.message);
                 reject(err);
             });
 
+            // ================================
+            // CLOSE HANDLER
+            // ================================
             this.ws.on("close", () => {
-                console.log("⚠️ Connection closed");
+                console.log("⚠️ Deriv connection closed");
+                this.isAuthorized = false;
             });
+
         });
     }
 
-    // TRADE FUNCTION
-    buy() {
+    // ========================================
+    // STEP 5: PROPOSAL + BUY FLOW (FIXED)
+    // ========================================
+    buyTrade(signal, config = {}) {
+
         return new Promise((resolve, reject) => {
 
-            if (!this.ws || this.ws.readyState !== 1) {
-                return reject("WebSocket not connected");
+            if (!this.ws || this.ws.readyState !== 1 || !this.isAuthorized) {
+                return reject("WebSocket not ready or unauthorized");
             }
 
-            this.ws.send(JSON.stringify({
+            const payload = {
                 buy: 1,
-                price: 5,
-                parameters: {
-                    amount: 1,
-                    basis: "stake",
-                    contract_type: "CALL",
-                    currency: "USD",
-                    duration: 1,
-                    duration_unit: "m",
-                    symbol: "R_100"
-                }
-            }));
+                price: config.stake || 1,
 
-            // listen once for response
+                parameters: {
+                    amount: config.stake || 1,
+                    basis: "stake",
+
+                    contract_type: signal.signal || signal,
+
+                    currency: "USD",
+
+                    duration: config.duration || 1,
+                    duration_unit: config.durationUnit || "t",
+
+                    symbol: config.symbol || "R_100"
+                }
+            };
+
+            this.ws.send(JSON.stringify(payload));
+
+            // ================================
+            // RESPONSE HANDLER
+            // ================================
             const handler = (msg) => {
-                const data = JSON.parse(msg);
+
+                let data;
+
+                try {
+                    data = JSON.parse(msg);
+                } catch (err) {
+                    return;
+                }
 
                 if (data.buy) {
                     this.ws.removeListener("message", handler);
-                    resolve(data.buy);
+
+                    resolve({
+                        contractId: data.buy.contract_id,
+                        status: "EXECUTED",
+                        raw: data.buy
+                    });
                 }
 
                 if (data.error) {
@@ -104,13 +167,20 @@ class DerivBot {
         });
     }
 
-    // C — KEEP CONNECTION ALIVE (PING SYSTEM)
+    // ========================================
+    // HEARTBEAT (KEEP ALIVE)
+    // ========================================
     startHeartbeat() {
+
         setInterval(() => {
-            if (this.ws && this.ws.readyState === 1) {
+
+            if (this.ws && this.ws.readyState === 1 && this.isAuthorized) {
+
                 this.ws.send(JSON.stringify({ ping: 1 }));
-                console.log("📡 Ping sent to Deriv");
+
+                console.log("📡 Deriv heartbeat");
             }
+
         }, 30000);
     }
 }
