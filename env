@@ -1,1 +1,41 @@
+# =========================
+# DERIV CONFIG
+# =========================
 DERIV_TOKEN=ft77U29qD0fxTjs
+DERIV_APP_ID=1089
+DERIV_WS_URL=wss://ws.derivws.com/websockets/v3
+
+# =========================
+# SERVER CONFIG
+# =========================
+PORT=3000
+NODE_ENV=production
+
+# =========================
+# FIREBASE ADMIN (SERVER SIDE)
+# =========================
+FIREBASE_PROJECT_ID=gibsonfx-web
+FIREBASE_CLIENT_EMAIL=your-service-account-email
+FIREBASE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\nYOUR_KEY\n-----END PRIVATE KEY-----\n"
+
+# =========================
+# BOT SETTINGS (GLOBAL DEFAULTS)
+# =========================
+DEFAULT_SYMBOL=R_100
+DEFAULT_STAKE=1
+DEFAULT_DURATION=1
+DEFAULT_DURATION_UNIT=t
+
+# =========================
+# RISK CONTROL (GLOBAL SAFETY LAYER)
+# =========================
+MAX_DAILY_TRADES=50
+MAX_CONCURRENT_USERS=500
+MIN_CONFIDENCE=60
+COOLDOWN_MS=8000
+
+# =========================
+# SECURITY
+# =========================
+ADMIN_EMAIL=youradmin@email.com
+ADMIN_PASSWORD=your_secure_password
